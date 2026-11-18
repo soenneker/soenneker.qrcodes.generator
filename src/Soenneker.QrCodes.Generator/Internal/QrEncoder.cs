@@ -1,5 +1,5 @@
 using System;
-using System.Collections.Generic;
+using System.Buffers.Binary;
 using System.Text;
 
 namespace Soenneker.QrCodes.Generator.Internal;
@@ -33,26 +33,27 @@ internal static class QrEncoder
             version++;
         }
 
-        byte[] payload = Utf8.GetBytes(text);
         byte[] data = new byte[block[0]];
-        int position = 0;
-        void Write(int value, int length)
+        // The ECI mode (0111), UTF-8 assignment (00011010), and byte mode (0100) occupy two bytes.
+        data[0] = 0x71;
+        data[1] = 0xA4;
+        int payloadStart;
+        if (version < 10)
         {
-            for (int bit = length - 1; bit >= 0; bit--, position++)
-                data[position / 8] |= (byte)(((value >> bit) & 1) << (7 - position % 8));
+            data[2] = (byte)byteCount;
+            payloadStart = 3;
         }
-        Write(7, 4); // ECI segment, assignment 26 (UTF-8).
-        Write(26, 8);
-        Write(4, 4); // Byte mode.
-        Write(payload.Length, version < 10 ? 8 : 16);
-        foreach (byte value in payload)
-            Write(value, 8);
-        Write(0, Math.Min(4, data.Length * 8 - position));
-        Write(0, (8 - position % 8) % 8);
-        int pad = 0xEC;
-        while (position < data.Length * 8)
+        else
         {
-            Write(pad, 8);
+            BinaryPrimitives.WriteUInt16BigEndian(data.AsSpan(2), (ushort)byteCount);
+            payloadStart = 4;
+        }
+        Utf8.GetBytes(text, data.AsSpan(payloadStart));
+        // A zero byte supplies the terminator and alignment bits when space remains.
+        byte pad = 0xEC;
+        for (int i = payloadStart + byteCount + 1; i < data.Length; i++)
+        {
+            data[i] = pad;
             pad ^= 0xFD;
         }
 
@@ -62,25 +63,26 @@ internal static class QrEncoder
     private static byte[] Interleave(byte[] data, int[] layout)
     {
         int count = layout[2] + layout[4];
-        var blocks = new byte[count][];
+        var blocks = new ReadOnlyMemory<byte>[count];
         var corrections = new byte[count][];
         byte[] polynomial = QrReedSolomon.CreatePolynomial(layout[1]);
         int offset = 0;
         for (int i = 0; i < count; i++)
         {
             int length = i < layout[2] ? layout[3] : layout[5];
-            blocks[i] = data.AsSpan(offset, length).ToArray();
-            corrections[i] = QrReedSolomon.Calculate(blocks[i], polynomial);
+            blocks[i] = data.AsMemory(offset, length);
+            corrections[i] = QrReedSolomon.Calculate(blocks[i].Span, polynomial);
             offset += length;
         }
-        var result = new List<byte>(data.Length + count * layout[1]);
+        var result = new byte[data.Length + count * layout[1]];
+        int position = 0;
         for (int column = 0; column < Math.Max(layout[3], layout[5]); column++)
-            foreach (byte[] bytes in blocks)
+            foreach (ReadOnlyMemory<byte> bytes in blocks)
                 if (column < bytes.Length)
-                    result.Add(bytes[column]);
+                    result[position++] = bytes.Span[column];
         for (int column = 0; column < layout[1]; column++)
             foreach (byte[] bytes in corrections)
-                result.Add(bytes[column]);
-        return result.ToArray();
+                result[position++] = bytes[column];
+        return result;
     }
 }

@@ -37,11 +37,11 @@ internal static class QrReedSolomon
         return polynomial;
     }
 
-    internal static byte[] Calculate(byte[] data, byte[] polynomial)
+    internal static byte[] Calculate(ReadOnlySpan<byte> data, byte[] polynomial)
     {
         int degree = polynomial.Length - 1;
         var dividend = new byte[data.Length + degree];
-        data.CopyTo(dividend, 0);
+        data.CopyTo(dividend);
         for (int i = 0; i < data.Length; i++)
         {
             byte coefficient = dividend[i];

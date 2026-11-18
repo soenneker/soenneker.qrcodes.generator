@@ -1,5 +1,6 @@
 using System;
 using System.Buffers.Binary;
+using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Text;
@@ -14,7 +15,7 @@ internal static class QrImageWriter
         int size = modules.GetLength(0);
         int width = (size + border * 2) * options.PixelsPerModule;
         using var output = new MemoryStream();
-        output.Write(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 });
+        output.Write([137, 80, 78, 71, 13, 10, 26, 10]);
         Span<byte> header = stackalloc byte[13];
         header.Clear();
         BinaryPrimitives.WriteInt32BigEndian(header, width);
@@ -25,11 +26,10 @@ internal static class QrImageWriter
         using (var zlib = new ZLibStream(compressed, CompressionLevel.Optimal, leaveOpen: true))
         {
             byte[] row = new byte[1 + (width + 7) / 8];
-            for (int y = 0; y < width; y++)
+            for (int moduleY = -border; moduleY < size + border; moduleY++)
             {
                 Array.Fill(row, (byte)255);
                 row[0] = 0; // PNG filter None.
-                int moduleY = y / options.PixelsPerModule - border;
                 if (moduleY >= 0 && moduleY < size)
                     for (int x = 0; x < width; x++)
                     {
@@ -37,7 +37,8 @@ internal static class QrImageWriter
                         if (moduleX >= 0 && moduleX < size && modules[moduleY, moduleX])
                             row[1 + x / 8] &= (byte)~(1 << (7 - x % 8));
                     }
-                zlib.Write(row);
+                for (int repeat = 0; repeat < options.PixelsPerModule; repeat++)
+                    zlib.Write(row);
             }
         }
         WriteChunk(output, "IDAT"u8, compressed.GetBuffer().AsSpan(0, (int)compressed.Length));
@@ -74,7 +75,7 @@ internal static class QrImageWriter
         int extent = size + 2 * border;
         int pixels = extent * options.PixelsPerModule;
         var svg = new StringBuilder();
-        svg.Append(FormattableString.Invariant($"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{pixels}\" height=\"{pixels}\" viewBox=\"0 0 {extent} {extent}\" shape-rendering=\"crispEdges\"><rect width=\"100%\" height=\"100%\" fill=\"#fff\"/><path fill=\"#000\" d=\""));
+        svg.Append(CultureInfo.InvariantCulture, $"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{pixels}\" height=\"{pixels}\" viewBox=\"0 0 {extent} {extent}\" shape-rendering=\"crispEdges\"><rect width=\"100%\" height=\"100%\" fill=\"#fff\"/><path fill=\"#000\" d=\"");
         for (int y = 0; y < size; y++)
             for (int x = 0; x < size; x++)
             {
@@ -82,7 +83,7 @@ internal static class QrImageWriter
                 int start = x;
                 while (x + 1 < size && modules[y, x + 1]) x++;
                 int length = x - start + 1;
-                svg.Append(FormattableString.Invariant($"M{start + border} {y + border}h{length}v1h-{length}z"));
+                svg.Append(CultureInfo.InvariantCulture, $"M{start + border} {y + border}h{length}v1h-{length}z");
             }
         return svg.Append("\"/></svg>").ToString();
     }
